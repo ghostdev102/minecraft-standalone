@@ -1,5 +1,5 @@
 # MinecraftStandalone Launcher — Dev Docs
-
+[CLICK FOR USERDOCS](USERDOCS.md)
 > ⚠️ **DMCA / Legal Notice**
 > This project is **not affiliated with Mojang AB, Microsoft, or Mojang Studios**.
 > "Minecraft" is a registered trademark of Mojang AB.
