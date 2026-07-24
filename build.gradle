@@ -1,0 +1,34 @@
+plugins {
+    id("java")
+    id("com.gradleup.shadow") version "8.3.6"
+}
+
+group = "launcher"
+version = "1.0.0"
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("org.slf4j:slf4j-api:2.0.16")
+    implementation("ch.qos.logback:logback-classic:1.5.13")
+    implementation("com.google.code.gson:gson:2.11.0")
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+}
+
+shadowJar {
+    archiveBaseName = "MinecraftStandalone"
+    archiveClassifier = ""
+    archiveVersion = ""
+    manifest {
+        attributes["Main-Class"] = "launcher.Main"
+    }
+}
+
+build {
+    dependsOn(shadowJar)
+}
