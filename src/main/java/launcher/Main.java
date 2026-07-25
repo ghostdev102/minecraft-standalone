@@ -73,14 +73,27 @@ public class Main {
         }
 
         if (args.length >= 1 && "--unpin".equals(args[0])) {
-            Path dest = Path.of(System.getProperty("user.home"), ".local/bin/mc");
             try {
+                Path home = Path.of(System.getProperty("user.home"));
+                Path jarDir = home.resolve(".local/share/MinecraftStandalone");
+                Path jarFile = jarDir.resolve("MinecraftStandalone.jar");
+                Path binDir = home.resolve(".local/bin");
+                Path wrapper = binDir.resolve("mc");
+
                 Path source = Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-                Files.createDirectories(dest.getParent());
-                Files.copy(source, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                dest.toFile().setExecutable(true);
-                System.out.println("Pinned to " + dest);
-                System.out.println("Now run: mc --username Notch");
+                Files.createDirectories(jarDir);
+                Files.copy(source, jarFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+                Files.createDirectories(binDir);
+                String script = "#!/usr/bin/env bash\nexec java -jar \"" + jarFile.toAbsolutePath() + "\" \"$@\"\n";
+                Files.writeString(wrapper, script);
+                wrapper.toFile().setExecutable(true);
+
+                System.out.println("Pinned to " + wrapper);
+                System.out.println("Add to PATH if not already:");
+                System.out.println("  echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc");
+                System.out.println("  source ~/.zshrc");
+                System.out.println("Then: mc --username Notch");
             } catch (Exception e) {
                 System.err.println("Failed to unpin: " + e.getMessage());
                 System.exit(1);
