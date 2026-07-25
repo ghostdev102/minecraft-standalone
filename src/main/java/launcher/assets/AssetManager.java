@@ -20,9 +20,14 @@ public class AssetManager {
     private static final Gson gson = new Gson();
 
     private final Path mcDir;
+    private boolean noSounds;
 
     public AssetManager(Path mcDir) {
         this.mcDir = mcDir;
+    }
+
+    public void setNoSounds(boolean noSounds) {
+        this.noSounds = noSounds;
     }
 
     public void downloadIndex(String id, String url) throws IOException {
@@ -60,6 +65,11 @@ public class AssetManager {
             Map<String, Object> info = (Map<String, Object>) entry.getValue();
             String hash = (String) info.get("hash");
             if (hash == null) continue;
+
+            String assetName = entry.getKey();
+            if (noSounds && (assetName.endsWith(".ogg") || assetName.endsWith(".wav"))) {
+                continue;
+            }
 
             Path objectFile = objectsDir.resolve(hash.substring(0, 2) + "/" + hash);
             if (!Files.exists(objectFile)) {

@@ -36,6 +36,7 @@ public class Main {
         String serverAddress = null;
         int serverPort = 25565;
         boolean setupMode = false;
+        boolean noSounds = false;
         boolean modForge = false;
         boolean modNeoForge = false;
         String addModsLoader = null;
@@ -57,6 +58,7 @@ public class Main {
                         try { serverPort = Integer.parseInt(args[++i]); } catch (NumberFormatException ignored) {}
                     }
                 }
+                case "--no-sounds" -> noSounds = true;
                 case "--setup" -> setupMode = true;
                 case "--mod-forge" -> modForge = true;
                 case "--mod-neoforge" -> modNeoForge = true;
@@ -84,6 +86,7 @@ public class Main {
             LibraryManager libraryManager = new LibraryManager(mcDir);
             NativeManager nativeManager = new NativeManager(mcDir);
             AssetManager assetManager = new AssetManager(mcDir);
+            assetManager.setNoSounds(noSounds);
             ModManager modManager = new ModManager(mcDir);
 
             if (setupMode) {
@@ -313,6 +316,7 @@ public class Main {
         System.out.println("  --mod-forge             Use Forge version (if installed)");
         System.out.println("  --mod-neoforge          Use NeoForge version (if installed)");
         System.out.println("  --mods <file.jar>       Copy mod jar to mods/ folder before launch");
+        System.out.println("  --no-sounds             Skip downloading sound assets (.ogg/.wav)");
         System.out.println();
         System.out.println("Setup / Mod loader management:");
         System.out.println("  --setup                 Download version manifest and prepare");
