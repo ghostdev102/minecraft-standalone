@@ -5,6 +5,7 @@ import launcher.auth.OfflineAuthManager;
 import launcher.launch.LaunchProfile;
 import launcher.launch.MinecraftLauncher;
 import launcher.libraries.LibraryManager;
+import launcher.mods.ModManager;
 import launcher.natives.NativeManager;
 import launcher.util.OsUtil;
 import launcher.util.VersionJson;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,17 +27,7 @@ public class Main {
 
     public static void main(String[] args) {
         if (args.length == 0 || (args.length == 1 && ("--help".equals(args[0]) || "-h".equals(args[0])))) {
-            System.out.println("Usage: java -jar MinecraftStandalone.jar [options]");
-            System.out.println("Options:");
-            System.out.println("  --username <name>     Set player name (default: Player#####)");
-            System.out.println("  --version <id>        Choose Minecraft version (default: embedded 26.3)");
-            System.out.println("  --server <address>    Direct connect to server");
-            System.out.println("  --port <port>         Server port (default: 25565)");
-            System.out.println("  --help, -h            Show this help");
-            System.out.println();
-            System.out.println("Examples:");
-            System.out.println("  java -jar MinecraftStandalone.jar");
-            System.out.println("  java -jar MinecraftStandalone.jar --username Notch --server 2b2t.org");
+            printHelp();
             System.exit(0);
         }
 
@@ -43,6 +35,11 @@ public class Main {
         String username = "Player" + ThreadLocalRandom.current().nextInt(10000, 99999);
         String serverAddress = null;
         int serverPort = 25565;
+        boolean setupMode = false;
+        boolean modForge = false;
+        boolean modNeoForge = false;
+        String addModsLoader = null;
+        List<Path> modJars = new ArrayList<>();
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -60,6 +57,23 @@ public class Main {
                         try { serverPort = Integer.parseInt(args[++i]); } catch (NumberFormatException ignored) {}
                     }
                 }
+                case "--setup" -> setupMode = true;
+                case "--mod-forge" -> modForge = true;
+                case "--mod-neoforge" -> modNeoForge = true;
+                case "--add-mods" -> {
+                    if (i + 1 < args.length) addModsLoader = args[++i];
+                }
+                case "--mods" -> {
+                    if (i + 1 < args.length) {
+                        String modPath = args[++i];
+                        Path p = Path.of(modPath);
+                        if (Files.exists(p)) {
+                            modJars.add(p);
+                        } else {
+                            log.warn("Mod not found: {}", modPath);
+                        }
+                    }
+                }
             }
         }
 
@@ -70,6 +84,58 @@ public class Main {
             LibraryManager libraryManager = new LibraryManager(mcDir);
             NativeManager nativeManager = new NativeManager(mcDir);
             AssetManager assetManager = new AssetManager(mcDir);
+            ModManager modManager = new ModManager(mcDir);
+
+            if (setupMode) {
+                log.info("Setup mode — downloading version manifest...");
+                versionManager.fetchVersionManifest();
+                if (versionId == null) {
+                    versionId = versionManager.latestRelease();
+                    if (versionId == null) {
+                        var all = versionManager.discoverVersions();
+                        if (!all.isEmpty()) versionId = all.get(all.size() - 1);
+                    }
+                }
+                log.info("Setup complete for version: {}", versionId);
+                System.exit(0);
+            }
+
+            if (addModsLoader != null) {
+                if (versionId == null) {
+                    versionManager.discoverVersions();
+                    versionId = versionManager.latestRelease();
+                }
+                if (versionId == null) {
+                    System.err.println("No version specified. Use --version <id>");
+                    System.exit(1);
+                }
+
+                switch (addModsLoader.toLowerCase()) {
+                    case "forge" -> {
+                        String fv = modManager.findForge(versionId);
+                        if (fv == null) {
+                            System.err.println("Forge not available for " + versionId);
+                            System.exit(1);
+                        }
+                        modManager.installForge(fv);
+                    }
+                    case "neoforge" -> {
+                        String nv = modManager.findNeoForge(versionId);
+                        if (nv == null) {
+                            System.err.println("NeoForge not available for " + versionId);
+                            System.exit(1);
+                        }
+                        modManager.installNeoForge(nv);
+                    }
+                    default -> {
+                        System.err.println("Unknown mod loader: " + addModsLoader + " (use forge or neoforge)");
+                        System.exit(1);
+                    }
+                }
+
+                log.info("Mod loader installed. You can now launch with --mod-forge or --mod-neoforge");
+                System.exit(0);
+            }
 
             versionManager.extractAll(mcDir);
             versionManager.discoverVersions();
@@ -97,6 +163,18 @@ public class Main {
                 }
             }
 
+            // If --mod-forge or --mod-neoforge, look for a Forge/NeoForge version
+            if (modForge || modNeoForge) {
+                String loader = modForge ? "forge" : "neoforge";
+                String found = findModdedVersion(versionManager.discoverVersions(), versionId, loader);
+                if (found != null) {
+                    versionId = found;
+                    log.info("Using {} version: {}", loader, versionId);
+                } else {
+                    log.warn("No {} version found for {}, falling back to vanilla", loader, versionId);
+                }
+            }
+
             versionManager.discoverVersions();
             VersionJson resolved = versionManager.resolve(versionId);
             if (resolved == null) {
@@ -106,10 +184,10 @@ public class Main {
 
             log.info("Downloading client jar...");
             Path clientJar = versionManager.versionJarPath(versionId);
-            if (!java.nio.file.Files.exists(clientJar) && resolved.downloads != null
+            if (!Files.exists(clientJar) && resolved.downloads != null
                     && resolved.downloads.client != null && resolved.downloads.client.url != null) {
                 try {
-                    java.nio.file.Files.createDirectories(clientJar.getParent());
+                    Files.createDirectories(clientJar.getParent());
                     launcher.util.DownloadUtil.download(resolved.downloads.client.url, clientJar);
                 } catch (Exception e) {
                     log.warn("Could not download client jar: {}", e.getMessage());
@@ -142,9 +220,9 @@ public class Main {
                     && resolved.logging.client.file != null) {
                 try {
                     Path loggingDir = mcDir.resolve("assets/log_configs");
-                    java.nio.file.Files.createDirectories(loggingDir);
+                    Files.createDirectories(loggingDir);
                     Path logConfig = loggingDir.resolve(resolved.logging.client.file.id);
-                    if (!java.nio.file.Files.exists(logConfig)) {
+                    if (!Files.exists(logConfig)) {
                         launcher.util.DownloadUtil.download(resolved.logging.client.file.url, logConfig);
                     }
                 } catch (Exception e) {
@@ -162,6 +240,11 @@ public class Main {
                 extraArgs.add(serverAddress);
                 extraArgs.add("--port");
                 extraArgs.add(String.valueOf(serverPort));
+            }
+
+            // Copy mod jars to mods folder
+            for (Path modJar : modJars) {
+                modManager.copyMod(modJar);
             }
 
             LaunchProfile launchProfile = new LaunchProfile(
@@ -201,5 +284,47 @@ public class Main {
             e.printStackTrace();
             System.exit(1);
         }
+    }
+
+    private static String findModdedVersion(List<String> versions, String baseVersion, String loader) {
+        // Look for something like "1.21-forge-51.0.33" or "1.21.4-neoforge-21.4.xxx"
+        String suffix = loader.equals("forge") ? "-forge-" : "-neoforge-";
+        for (String v : versions) {
+            if (v.startsWith(baseVersion) && v.contains(suffix)) {
+                return v;
+            }
+        }
+        // Broader match: any version with the loader name
+        String altSuffix = loader.equals("forge") ? "-neoforge-" : "-forge-";
+        for (String v : versions) {
+            if (v.contains(suffix)) return v;
+        }
+        return null;
+    }
+
+    private static void printHelp() {
+        System.out.println("Usage: java -jar MinecraftStandalone.jar [options]");
+        System.out.println();
+        System.out.println("Launch options:");
+        System.out.println("  --username <name>       Player name (default: Player#####)");
+        System.out.println("  --version <id>          Minecraft version (default: latest release)");
+        System.out.println("  --server <address>      Direct connect to server");
+        System.out.println("  --port <port>           Server port (default: 25565)");
+        System.out.println("  --mod-forge             Use Forge version (if installed)");
+        System.out.println("  --mod-neoforge          Use NeoForge version (if installed)");
+        System.out.println("  --mods <file.jar>       Copy mod jar to mods/ folder before launch");
+        System.out.println();
+        System.out.println("Setup / Mod loader management:");
+        System.out.println("  --setup                 Download version manifest and prepare");
+        System.out.println("  --add-mods forge|neoforge  Install Forge/NeoForge for current version");
+        System.out.println("  --help, -h              Show this help");
+        System.out.println();
+        System.out.println("Examples:");
+        System.out.println("  java -jar MinecraftStandalone.jar");
+        System.out.println("  java -jar MinecraftStandalone.jar --setup");
+        System.out.println("  java -jar MinecraftStandalone.jar --add-mods forge --version 1.21.1");
+        System.out.println("  java -jar MinecraftStandalone.jar --mod-forge");
+        System.out.println("  java -jar MinecraftStandalone.jar --mods mymod.jar");
+        System.out.println("  java -jar MinecraftStandalone.jar --username Notch --server 2b2t.org");
     }
 }
