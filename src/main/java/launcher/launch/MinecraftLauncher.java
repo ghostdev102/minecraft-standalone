@@ -20,18 +20,39 @@ public class MinecraftLauncher {
     private final NativeManager nativeManager;
     private final Path jarPath;
     private final List<Path> classpath;
+    private final String ramOverride;
 
     public MinecraftLauncher(VersionJson version, NativeManager nativeManager,
-                             Path jarPath, List<Path> classpath) {
+                             Path jarPath, List<Path> classpath, String ramOverride) {
         this.version = version;
         this.nativeManager = nativeManager;
         this.jarPath = jarPath;
         this.classpath = classpath;
+        this.ramOverride = ramOverride;
+    }
+
+    public MinecraftLauncher(VersionJson version, NativeManager nativeManager,
+                             Path jarPath, List<Path> classpath) {
+        this(version, nativeManager, jarPath, classpath, null);
     }
 
     public Process launch(LaunchProfile profile) throws IOException {
+        List<String> cmd = buildCommand(profile);
+        log.info("Launching Minecraft");
+        return new ProcessBuilder(cmd)
+                .directory(Path.of(profile.mcDir()).toFile())
+                .inheritIO()
+                .start();
+    }
+
+    public List<String> buildCommand(LaunchProfile profile) {
         List<String> cmd = new ArrayList<>();
         cmd.add(findJava());
+
+        if (ramOverride != null) {
+            String xmx = ramOverride.startsWith("-") ? ramOverride : "-Xmx" + ramOverride;
+            cmd.add(xmx);
+        }
 
         String nativesDir = nativeManager.nativesDir().toAbsolutePath().toString();
         cmd.add("-Djava.library.path=" + nativesDir);
@@ -85,11 +106,7 @@ public class MinecraftLauncher {
             cmd.addAll(profile.gameArgs());
         }
 
-        log.info("Launching Minecraft");
-        return new ProcessBuilder(cmd)
-                .directory(Path.of(profile.mcDir()).toFile())
-                .inheritIO()
-                .start();
+        return cmd;
     }
 
     @SuppressWarnings("unchecked")
@@ -103,9 +120,7 @@ public class MinecraftLauncher {
             cmd.add(expand(s, profile));
         } else if (value instanceof List<?> list) {
             for (Object v : list) {
-                if (v instanceof String s) {
-                    cmd.add(expand(s, profile));
-                }
+                if (v instanceof String s) cmd.add(expand(s, profile));
             }
         }
     }

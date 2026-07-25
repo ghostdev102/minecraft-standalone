@@ -7,6 +7,7 @@ import launcher.launch.MinecraftLauncher;
 import launcher.libraries.LibraryManager;
 import launcher.mods.ModManager;
 import launcher.natives.NativeManager;
+import launcher.util.LauncherConfig;
 import launcher.util.OsUtil;
 import launcher.util.VersionJson;
 import launcher.versions.VersionManager;
@@ -25,63 +26,116 @@ public class Main {
 
     private static final Logger log = LoggerFactory.getLogger(Main.class);
 
+    private static final String[] SPLASHES = {
+        "Also try Terraria!",
+        "Watch out for creepers!",
+        "Digging deeper...",
+        "Now with extra diamonds!",
+        "Powered by Java 25",
+        "1.3MB of pure launcher",
+        "No Electron here!",
+        "The launcher was a success!",
+        "Minecraft Standalone Edition",
+        "Cracked but classy",
+        "Don't dig straight down!",
+        "Remember to sleep",
+        "Also try Vintagestory!",
+        "Not affiliated with Mojang AB",
+        "Super Beta",
+    };
+
     public static void main(String[] args) {
         if (args.length == 0 || (args.length == 1 && ("--help".equals(args[0]) || "-h".equals(args[0])))) {
             printHelp();
             System.exit(0);
         }
 
-        String versionId = null;
-        String username = "Player" + ThreadLocalRandom.current().nextInt(10000, 99999);
-        String serverAddress = null;
+        if (args.length == 1 && "--list-versions".equals(args[0])) {
+            Path mcDir = Path.of(OsUtil.mcDir());
+            VersionManager vm = new VersionManager(mcDir);
+            try { vm.extractAll(mcDir); } catch (Exception ignored) {}
+            List<String> versions = vm.discoverVersions();
+            if (versions.isEmpty()) {
+                try {
+                    vm.fetchVersionManifest();
+                    versions = vm.discoverVersions();
+                } catch (Exception e) {
+                    System.err.println("No versions found");
+                    System.exit(1);
+                }
+            }
+            versions.forEach(System.out::println);
+            System.exit(0);
+        }
+
+        if (args.length >= 1 && "--unpin".equals(args[0])) {
+            Path dest = Path.of(System.getProperty("user.home"), ".local/bin/mc");
+            try {
+                Path source = Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+                Files.createDirectories(dest.getParent());
+                Files.copy(source, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                dest.toFile().setExecutable(true);
+                System.out.println("Pinned to " + dest);
+                System.out.println("Now run: mc --username Notch");
+            } catch (Exception e) {
+                System.err.println("Failed to unpin: " + e.getMessage());
+                System.exit(1);
+            }
+            System.exit(0);
+        }
+
+        Path mcDir = Path.of(OsUtil.mcDir());
+
+        LauncherConfig config = new LauncherConfig(mcDir);
+
+        String versionId = config.get("version", null);
+        String username = config.get("username", "Player" + ThreadLocalRandom.current().nextInt(10000, 99999));
+        String serverAddress = config.get("server", null);
         int serverPort = 25565;
         boolean setupMode = false;
-        boolean noSounds = false;
+        boolean noSounds = Boolean.parseBoolean(config.get("no-sounds", "false"));
         boolean modForge = false;
         boolean modNeoForge = false;
         String addModsLoader = null;
         List<Path> modJars = new ArrayList<>();
+        String ramOverride = config.get("ram", null);
+        String resOverride = config.get("resolution", null);
+        boolean dryRun = false;
+        boolean verbose = false;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--username" -> {
-                    if (i + 1 < args.length) username = args[++i];
-                }
-                case "--version" -> {
-                    if (i + 1 < args.length) versionId = args[++i];
-                }
-                case "--server" -> {
-                    if (i + 1 < args.length) serverAddress = args[++i];
-                }
-                case "--port" -> {
-                    if (i + 1 < args.length) {
-                        try { serverPort = Integer.parseInt(args[++i]); } catch (NumberFormatException ignored) {}
-                    }
-                }
+                case "--username" -> { if (i + 1 < args.length) username = args[++i]; }
+                case "--version"  -> { if (i + 1 < args.length) versionId = args[++i]; }
+                case "--server"   -> { if (i + 1 < args.length) serverAddress = args[++i]; }
+                case "--port"     -> { if (i + 1 < args.length) { try { serverPort = Integer.parseInt(args[++i]); } catch (NumberFormatException ignored) {} } }
+                case "--ram"      -> { if (i + 1 < args.length) ramOverride = args[++i]; }
+                case "--res"      -> { if (i + 1 < args.length) resOverride = args[++i]; }
                 case "--no-sounds" -> noSounds = true;
-                case "--setup" -> setupMode = true;
+                case "--setup"    -> setupMode = true;
+                case "--dry-run"  -> dryRun = true;
+                case "--verbose"  -> verbose = true;
                 case "--mod-forge" -> modForge = true;
                 case "--mod-neoforge" -> modNeoForge = true;
-                case "--add-mods" -> {
-                    if (i + 1 < args.length) addModsLoader = args[++i];
-                }
-                case "--mods" -> {
+                case "--add-mods" -> { if (i + 1 < args.length) addModsLoader = args[++i]; }
+                case "--mods"     -> {
                     if (i + 1 < args.length) {
                         String modPath = args[++i];
                         Path p = Path.of(modPath);
-                        if (Files.exists(p)) {
-                            modJars.add(p);
-                        } else {
-                            log.warn("Mod not found: {}", modPath);
-                        }
+                        if (Files.exists(p)) modJars.add(p);
+                        else log.warn("Mod not found: {}", modPath);
                     }
                 }
             }
         }
 
-        try {
-            Path mcDir = Path.of(OsUtil.mcDir());
+        if (verbose) {
+            System.setProperty("logback.level", "DEBUG");
+            ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+            root.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        }
 
+        try {
             VersionManager versionManager = new VersionManager(mcDir);
             LibraryManager libraryManager = new LibraryManager(mcDir);
             NativeManager nativeManager = new NativeManager(mcDir);
@@ -100,6 +154,8 @@ public class Main {
                     }
                 }
                 log.info("Setup complete for version: {}", versionId);
+                config.set("version", versionId);
+                config.save();
                 System.exit(0);
             }
 
@@ -112,30 +168,19 @@ public class Main {
                     System.err.println("No version specified. Use --version <id>");
                     System.exit(1);
                 }
-
                 switch (addModsLoader.toLowerCase()) {
                     case "forge" -> {
                         String fv = modManager.findForge(versionId);
-                        if (fv == null) {
-                            System.err.println("Forge not available for " + versionId);
-                            System.exit(1);
-                        }
+                        if (fv == null) { System.err.println("Forge not available for " + versionId); System.exit(1); }
                         modManager.installForge(fv);
                     }
                     case "neoforge" -> {
                         String nv = modManager.findNeoForge(versionId);
-                        if (nv == null) {
-                            System.err.println("NeoForge not available for " + versionId);
-                            System.exit(1);
-                        }
+                        if (nv == null) { System.err.println("NeoForge not available for " + versionId); System.exit(1); }
                         modManager.installNeoForge(nv);
                     }
-                    default -> {
-                        System.err.println("Unknown mod loader: " + addModsLoader + " (use forge or neoforge)");
-                        System.exit(1);
-                    }
+                    default -> { System.err.println("Unknown mod loader: " + addModsLoader + " (use forge or neoforge)"); System.exit(1); }
                 }
-
                 log.info("Mod loader installed. You can now launch with --mod-forge or --mod-neoforge");
                 System.exit(0);
             }
@@ -149,7 +194,7 @@ public class Main {
                     versionId = "26.3";
                     log.info("Using embedded version: {}", versionId);
                 } else if (!versions.isEmpty()) {
-                    versionId = versions.get(0);
+                    versionId = versions.get(versions.size() - 1);
                     log.info("Auto-detected version: {}", versionId);
                 } else {
                     try {
@@ -166,7 +211,6 @@ public class Main {
                 }
             }
 
-            // If --mod-forge or --mod-neoforge, look for a Forge/NeoForge version
             if (modForge || modNeoForge) {
                 String loader = modForge ? "forge" : "neoforge";
                 String found = findModdedVersion(versionManager.discoverVersions(), versionId, loader);
@@ -244,8 +288,18 @@ public class Main {
                 extraArgs.add("--port");
                 extraArgs.add(String.valueOf(serverPort));
             }
+            if (resOverride != null) {
+                String[] parts = resOverride.toLowerCase().split("x");
+                if (parts.length == 2) {
+                    try {
+                        extraArgs.add("--width");
+                        extraArgs.add(parts[0]);
+                        extraArgs.add("--height");
+                        extraArgs.add(parts[1]);
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
 
-            // Copy mod jars to mods folder
             for (Path modJar : modJars) {
                 modManager.copyMod(modJar);
             }
@@ -261,14 +315,41 @@ public class Main {
             log.info("Gathering libraries...");
             var classpath = libraryManager.gatherLibraries(resolved);
 
+            // Splash + creeper countdown
+            String splash = SPLASHES[ThreadLocalRandom.current().nextInt(SPLASHES.length)];
+            printCountdown(splash);
+
+            if (dryRun) {
+                MinecraftLauncher mcLaunch = new MinecraftLauncher(
+                        resolved, nativeManager,
+                        versionManager.versionJarPath(versionId),
+                        classpath, ramOverride
+                );
+                System.out.println("=== DRY RUN ===");
+                System.out.println("Version: " + versionId);
+                System.out.println("Main class: " + (resolved.mainClass != null ? resolved.mainClass : "net.minecraft.client.main.Main"));
+                System.out.println("Classpath: " + String.join(System.getProperty("path.separator"), classpath.stream().map(Path::toString).toList()));
+                System.out.println("Command: " + String.join(" ", mcLaunch.buildCommand(launchProfile)));
+                System.exit(0);
+            }
+
             log.info("Launching Minecraft...");
             MinecraftLauncher mcLaunch = new MinecraftLauncher(
                     resolved, nativeManager,
                     versionManager.versionJarPath(versionId),
-                    classpath
+                    classpath, ramOverride
             );
 
             Process process = mcLaunch.launch(launchProfile);
+
+            // Save config on success
+            config.set("username", username);
+            config.set("version", versionId);
+            if (serverAddress != null) config.set("server", serverAddress);
+            if (ramOverride != null) config.set("ram", ramOverride);
+            if (resOverride != null) config.set("resolution", resOverride);
+            if (noSounds) config.set("no-sounds", "true");
+            config.save();
 
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
@@ -289,16 +370,46 @@ public class Main {
         }
     }
 
+    private static void printCountdown(String splash) {
+        // Creeper face
+        String BLACK = "\033[30m";
+        String GREEN = "\033[32m";
+        String RESET = "\033[0m";
+        String PIXEL = "██";
+
+        String[] rows = {
+            PIXEL + PIXEL + PIXEL + PIXEL + PIXEL + PIXEL + PIXEL + PIXEL,
+            PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL,
+            PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL,
+            PIXEL + PIXEL + PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL + BLACK + PIXEL,
+            PIXEL + BLACK + PIXEL + GREEN + PIXEL + GREEN + PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL,
+            PIXEL + BLACK + PIXEL + GREEN + PIXEL + GREEN + PIXEL + GREEN + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL,
+            PIXEL + BLACK + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL + GREEN + PIXEL + BLACK + PIXEL + BLACK + PIXEL,
+        };
+
+        for (String row : rows) {
+            System.out.println(BLACK + row + RESET);
+        }
+        System.out.println();
+        System.out.println("  \"" + splash + "\"");
+        System.out.println("  Launching in 3...");
+        sleep(800);
+        System.out.println("  Launching in 2...");
+        sleep(800);
+        System.out.println("  Launching in 1...");
+        sleep(800);
+        System.out.println();
+    }
+
+    private static void sleep(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    }
+
     private static String findModdedVersion(List<String> versions, String baseVersion, String loader) {
-        // Look for something like "1.21-forge-51.0.33" or "1.21.4-neoforge-21.4.xxx"
         String suffix = loader.equals("forge") ? "-forge-" : "-neoforge-";
         for (String v : versions) {
-            if (v.startsWith(baseVersion) && v.contains(suffix)) {
-                return v;
-            }
+            if (v.startsWith(baseVersion) && v.contains(suffix)) return v;
         }
-        // Broader match: any version with the loader name
-        String altSuffix = loader.equals("forge") ? "-neoforge-" : "-forge-";
         for (String v : versions) {
             if (v.contains(suffix)) return v;
         }
@@ -310,25 +421,34 @@ public class Main {
         System.out.println();
         System.out.println("Launch options:");
         System.out.println("  --username <name>       Player name (default: Player#####)");
-        System.out.println("  --version <id>          Minecraft version (default: latest release)");
+        System.out.println("  --version <id>          Minecraft version (default: latest)");
         System.out.println("  --server <address>      Direct connect to server");
         System.out.println("  --port <port>           Server port (default: 25565)");
+        System.out.println("  --ram <size>            Max heap for child JVM (e.g. 4G, 2048M)");
+        System.out.println("  --res <WxH>             Window resolution (e.g. 1920x1080)");
         System.out.println("  --mod-forge             Use Forge version (if installed)");
         System.out.println("  --mod-neoforge          Use NeoForge version (if installed)");
-        System.out.println("  --mods <file.jar>       Copy mod jar to mods/ folder before launch");
-        System.out.println("  --no-sounds             Skip downloading sound assets (.ogg/.wav)");
+        System.out.println("  --mods <file.jar>       Copy mod to mods/ before launch");
+        System.out.println("  --no-sounds             Skip downloading sound assets");
+        System.out.println("  --dry-run               Print the launch command and exit");
+        System.out.println("  --verbose               Debug-level logging");
         System.out.println();
         System.out.println("Setup / Mod loader management:");
         System.out.println("  --setup                 Download version manifest and prepare");
-        System.out.println("  --add-mods forge|neoforge  Install Forge/NeoForge for current version");
+        System.out.println("  --add-mods forge|neoforge  Install Forge/NeoForge");
+        System.out.println("  --list-versions         List all installed/available versions");
+        System.out.println("  --unpin                 Symlink jar to ~/.local/bin/mc");
         System.out.println("  --help, -h              Show this help");
+        System.out.println();
+        System.out.println("Config file: ~/.minecraft/launcher.properties");
+        System.out.println("  Settings are saved automatically on launch.");
+        System.out.println("  CLI flags override config values.");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  java -jar MinecraftStandalone.jar");
-        System.out.println("  java -jar MinecraftStandalone.jar --setup");
-        System.out.println("  java -jar MinecraftStandalone.jar --add-mods forge --version 1.21.1");
-        System.out.println("  java -jar MinecraftStandalone.jar --mod-forge");
-        System.out.println("  java -jar MinecraftStandalone.jar --mods mymod.jar");
         System.out.println("  java -jar MinecraftStandalone.jar --username Notch --server 2b2t.org");
+        System.out.println("  java -jar MinecraftStandalone.jar --setup");
+        System.out.println("  java -jar MinecraftStandalone.jar --ram 4G --res 1920x1080");
+        System.out.println("  java -jar MinecraftStandalone.jar --add-mods forge --version 1.21.1");
     }
 }
