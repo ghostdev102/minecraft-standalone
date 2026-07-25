@@ -8,21 +8,28 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ModManager {
 
     private static final Logger log = LoggerFactory.getLogger(ModManager.class);
-    private static final HttpClient client = HttpClient.newHttpClient();
+    private static final HttpClient client = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     private static final String FORGE_MAVEN = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
     private static final String NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
+    private static final String OPTIFINE_DOWNLOADS = "https://optifine.net/downloads";
 
     private final Path mcDir;
 
@@ -63,31 +70,12 @@ public class ModManager {
                 + forgeVersion + "/forge-" + forgeVersion + "-installer.jar";
         Path installer = mcDir.resolve(".launcher/forge-installer-" + forgeVersion + ".jar");
         Files.createDirectories(installer.getParent());
-
         if (!Files.exists(installer)) {
             log.info("Downloading Forge installer: {}", forgeVersion);
             launcher.util.DownloadUtil.download(url, installer);
         }
-
         log.info("Running Forge installer...");
-        Process proc = new ProcessBuilder(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-jar", installer.toAbsolutePath().toString(),
-                "--installClient",
-                mcDir.toAbsolutePath().toString()
-        ).inheritIO().start();
-
-        int exit;
-        try {
-            exit = proc.waitFor();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while installing Forge", e);
-        }
-
-        if (exit != 0) {
-            throw new IOException("Forge installer exited with code " + exit);
-        }
+        runInstaller(installer);
         log.info("Forge {} installed successfully", forgeVersion);
     }
 
@@ -96,32 +84,78 @@ public class ModManager {
                 + neoVersion + "/neoforge-" + neoVersion + "-installer.jar";
         Path installer = mcDir.resolve(".launcher/neoforge-installer-" + neoVersion + ".jar");
         Files.createDirectories(installer.getParent());
-
         if (!Files.exists(installer)) {
             log.info("Downloading NeoForge installer: {}", neoVersion);
             launcher.util.DownloadUtil.download(url, installer);
         }
-
         log.info("Running NeoForge installer...");
-        Process proc = new ProcessBuilder(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-jar", installer.toAbsolutePath().toString(),
-                "--installClient",
-                mcDir.toAbsolutePath().toString()
-        ).inheritIO().start();
+        runInstaller(installer);
+        log.info("NeoForge {} installed successfully", neoVersion);
+    }
 
-        int exit;
+    public Path downloadOptiFine(String mcVersion) throws IOException {
+        String html;
         try {
-            exit = proc.waitFor();
+            HttpRequest req = HttpRequest.newBuilder(URI.create(OPTIFINE_DOWNLOADS))
+                    .header("User-Agent", "Mozilla/5.0").GET().build();
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) {
+                throw new IOException("HTTP " + res.statusCode() + " fetching OptiFine downloads");
+            }
+            html = res.body();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while installing NeoForge", e);
+            throw new IOException("Interrupted", e);
         }
 
-        if (exit != 0) {
-            throw new IOException("NeoForge installer exited with code " + exit);
+        // Find download page link for this MC version
+        // <tr>.*?<td[^>]*>1\.21\.1.*?href="(.*?)"
+        Pattern versionPattern = Pattern.compile(
+                "<td[^>]*>" + Pattern.quote(mcVersion) + "</td>\\s*<td[^>]*><a href=\"([^\"]+)\"",
+                Pattern.DOTALL);
+        Matcher m = versionPattern.matcher(html);
+        if (!m.find()) {
+            throw new IOException("OptiFine not available for " + mcVersion);
         }
-        log.info("NeoForge {} installed successfully", neoVersion);
+        String dlPageUrl = m.group(1);
+        if (!dlPageUrl.startsWith("http")) {
+            dlPageUrl = "https://optifine.net" + dlPageUrl;
+        }
+
+        // Fetch download page to get actual jar URL
+        String pageHtml;
+        try {
+            HttpRequest req2 = HttpRequest.newBuilder(URI.create(dlPageUrl))
+                    .header("User-Agent", "Mozilla/5.0").GET().build();
+            HttpResponse<String> res2 = client.send(req2, HttpResponse.BodyHandlers.ofString());
+            if (res2.statusCode() != 200) {
+                throw new IOException("HTTP " + res2.statusCode() + " fetching " + dlPageUrl);
+            }
+            pageHtml = res2.body();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted", e);
+        }
+
+        // Find download link with "OptiFine" in URL
+        Pattern jarPattern = Pattern.compile("href=\"([^\"]*OptiFine[^\"]*\\.jar)\"");
+        Matcher jm = jarPattern.matcher(pageHtml);
+        if (!jm.find()) {
+            throw new IOException("Could not find OptiFine jar URL on download page");
+        }
+        String jarUrl = jm.group(1);
+        if (!jarUrl.startsWith("http")) {
+            jarUrl = "https://optifine.net" + jarUrl;
+        }
+
+        String fileName = jarUrl.substring(jarUrl.lastIndexOf('/') + 1);
+        Path dest = mcDir.resolve("libraries/optifine/" + fileName);
+        if (!Files.exists(dest)) {
+            log.info("Downloading OptiFine: {}", fileName);
+            Files.createDirectories(dest.getParent());
+            launcher.util.DownloadUtil.download(jarUrl, dest);
+        }
+        return dest;
     }
 
     public void copyMod(Path modJar) throws IOException {
@@ -134,6 +168,25 @@ public class ModManager {
         }
     }
 
+    private void runInstaller(Path installer) throws IOException {
+        Process proc = new ProcessBuilder(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-jar", installer.toAbsolutePath().toString(),
+                "--installClient",
+                mcDir.toAbsolutePath().toString()
+        ).inheritIO().start();
+        int exit;
+        try {
+            exit = proc.waitFor();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted", e);
+        }
+        if (exit != 0) {
+            throw new IOException("Installer exited with code " + exit);
+        }
+    }
+
     private List<ForgeVersion> parseMavenMetadata(String metadataUrl) throws IOException {
         List<ForgeVersion> result = new ArrayList<>();
         try {
@@ -142,11 +195,9 @@ public class ModManager {
             if (res.statusCode() != 200) {
                 throw new IOException("HTTP " + res.statusCode() + " fetching " + metadataUrl);
             }
-
             XMLStreamReader xml = XMLInputFactory.newInstance().createXMLStreamReader(res.body());
             String currentVersion = null;
             boolean inVersion = false;
-
             while (xml.hasNext()) {
                 xml.next();
                 if (xml.isStartElement() && "version".equals(xml.getLocalName())) {
@@ -156,9 +207,7 @@ public class ModManager {
                 } else if (xml.isEndElement() && "version".equals(xml.getLocalName())) {
                     if (currentVersion != null && !currentVersion.isEmpty()) {
                         String[] parts = currentVersion.split("-", 2);
-                        String mc = parts[0];
-                        String build = parts.length > 1 ? parts[1] : "";
-                        result.add(new ForgeVersion(currentVersion, mc, build));
+                        result.add(new ForgeVersion(currentVersion, parts[0], parts.length > 1 ? parts[1] : ""));
                     }
                     currentVersion = null;
                     inVersion = false;

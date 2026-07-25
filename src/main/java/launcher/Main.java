@@ -121,6 +121,10 @@ public class Main {
         boolean verbose = false;
         String skinPath = null;
         String capePath = null;
+        String resourcePackPath = null;
+        String resourcePackRm = null;
+        String shaderPath = null;
+        String optifineJarPath = null;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -132,6 +136,10 @@ public class Main {
                 case "--res"      -> { if (i + 1 < args.length) resOverride = args[++i]; }
                 case "--skin" -> { if (i + 1 < args.length) skinPath = args[++i]; }
                 case "--cape" -> { if (i + 1 < args.length) capePath = args[++i]; }
+                case "--resource-pack" -> { if (i + 1 < args.length) resourcePackPath = args[++i]; }
+                case "--resource-pack-rm" -> { if (i + 1 < args.length) resourcePackRm = args[++i]; }
+                case "--shader" -> { if (i + 1 < args.length) shaderPath = args[++i]; }
+                case "--optifine-jar" -> { if (i + 1 < args.length) optifineJarPath = args[++i]; }
                 case "--no-sounds" -> noSounds = true;
                 case "--setup"    -> setupMode = true;
                 case "--dry-run"  -> dryRun = true;
@@ -200,10 +208,51 @@ public class Main {
                         if (nv == null) { System.err.println("NeoForge not available for " + versionId); System.exit(1); }
                         modManager.installNeoForge(nv);
                     }
-                    default -> { System.err.println("Unknown mod loader: " + addModsLoader + " (use forge or neoforge)"); System.exit(1); }
+                    case "optifine" -> {
+                        if (optifineJarPath != null) {
+                            Path ofJar = Path.of(optifineJarPath);
+                            if (!Files.exists(ofJar)) {
+                                System.err.println("OptiFine jar not found: " + optifineJarPath);
+                                System.exit(1);
+                            }
+                            Path dest = mcDir.resolve("libraries/optifine/" + ofJar.getFileName());
+                            Files.createDirectories(dest.getParent());
+                            Files.copy(ofJar, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                            log.info("Copied OptiFine to {}", dest);
+                        } else {
+                            Path ofJar = modManager.downloadOptiFine(versionId);
+                            log.info("OptiFine downloaded: {}", ofJar);
+                        }
+                    }
+                    default -> { System.err.println("Unknown mod loader: " + addModsLoader + " (use forge, neoforge, or optifine)"); System.exit(1); }
                 }
                 log.info("Mod loader installed. You can now launch with --mod-forge or --mod-neoforge");
                 System.exit(0);
+            }
+
+            if (resourcePackRm != null) {
+                Path rpFile = mcDir.resolve("resourcepacks").resolve(resourcePackRm);
+                if (rpFile.getFileName().toString().endsWith(".zip") || Files.exists(rpFile)) {
+                    Files.deleteIfExists(rpFile);
+                    log.info("Removed resource pack: {}", resourcePackRm);
+                } else {
+                    // Try with .zip extension
+                    Path withZip = rpFile.resolveSibling(rpFile.getFileName() + ".zip");
+                    if (Files.exists(withZip)) {
+                        Files.delete(withZip);
+                        log.info("Removed resource pack: {}.zip", resourcePackRm);
+                    } else {
+                        log.warn("Resource pack not found: {}", resourcePackRm);
+                    }
+                }
+            }
+
+            if (resourcePackPath != null) {
+                resolveFile(resourcePackPath, "resource pack", mcDir, "resourcepacks");
+            }
+
+            if (shaderPath != null) {
+                resolveFile(shaderPath, "shader", mcDir, "shaderpacks");
             }
 
             versionManager.extractAll(mcDir);
@@ -435,21 +484,32 @@ public class Main {
         Path dir = mcDir.resolve(subdir);
         Files.createDirectories(dir);
         Path dest = dir.resolve(username + ".png");
+        return copyOrDownload(input, subdir, dest);
+    }
 
+    private static Path resolveFile(String input, String label, Path mcDir, String subdir) throws IOException {
+        Path dir = mcDir.resolve(subdir);
+        Files.createDirectories(dir);
+        String name = input.contains("/") ? input.substring(input.lastIndexOf('/') + 1) : input;
+        Path dest = dir.resolve(name);
+        return copyOrDownload(input, label, dest);
+    }
+
+    private static Path copyOrDownload(String input, String label, Path dest) throws IOException {
         if (input.startsWith("http://") || input.startsWith("https://")) {
-            log.info("Downloading {} from {}", subdir, input);
+            log.info("Downloading {} from {}", label, input);
             try (InputStream in = URI.create(input).toURL().openStream()) {
                 Files.copy(in, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
         } else {
             Path src = Path.of(input);
             if (!Files.exists(src)) {
-                log.warn("{} file not found: {}", subdir, src);
+                log.warn("{} not found: {}", label, src);
                 return null;
             }
             Files.copy(src, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
-        log.info("Saved {} to {}", subdir.substring(0, subdir.length() - 1), dest);
+        log.info("Saved {} to {}", label, dest);
         return dest;
     }
 
@@ -483,12 +543,16 @@ public class Main {
         System.out.println("  --mods <file.jar>       Copy mod to mods/ before launch");
         System.out.println("  --skin <file|url>       Skin PNG path or URL");
         System.out.println("  --cape <file|url>       Cape PNG path or URL");
+        System.out.println("  --resource-pack <z|url> Resource pack zip path or URL");
+        System.out.println("  --resource-pack-rm <n>  Remove resource pack by name");
+        System.out.println("  --shader <zip|url>      Shader pack zip path or URL");
         System.out.println("  --dry-run               Print the launch command and exit");
         System.out.println("  --verbose               Debug-level logging");
         System.out.println();
         System.out.println("Setup / Mod loader management:");
         System.out.println("  --setup                 Download version manifest and prepare");
-        System.out.println("  --add-mods forge|neoforge  Install Forge/NeoForge");
+        System.out.println("  --add-mods forge|neoforge|optifine  Install Forge/NeoForge/OptiFine");
+        System.out.println("  --optifine-jar <file>   Use local OptiFine jar (with --add-mods optifine)");
         System.out.println("  --list-versions         List all installed/available versions");
         System.out.println("  --unpin                 Symlink jar to ~/.local/bin/mc");
         System.out.println("  --help, -h              Show this help");
