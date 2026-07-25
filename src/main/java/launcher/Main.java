@@ -208,6 +208,11 @@ public class Main {
                         if (nv == null) { System.err.println("NeoForge not available for " + versionId); System.exit(1); }
                         modManager.installNeoForge(nv);
                     }
+                    case "fabric" -> {
+                        String fi = modManager.findLatestFabricInstaller();
+                        if (fi == null) { System.err.println("Could not find Fabric installer"); System.exit(1); }
+                        modManager.installFabric(fi, versionId);
+                    }
                     case "optifine" -> {
                         if (optifineJarPath != null) {
                             Path ofJar = Path.of(optifineJarPath);
@@ -224,7 +229,7 @@ public class Main {
                             log.info("OptiFine downloaded: {}", ofJar);
                         }
                     }
-                    default -> { System.err.println("Unknown mod loader: " + addModsLoader + " (use forge, neoforge, or optifine)"); System.exit(1); }
+                    default -> { System.err.println("Unknown mod loader: " + addModsLoader + " (use forge, neoforge, fabric, or optifine)"); System.exit(1); }
                 }
                 log.info("Mod loader installed. You can now launch with --mod-forge or --mod-neoforge");
                 System.exit(0);
@@ -551,7 +556,7 @@ public class Main {
         System.out.println();
         System.out.println("Setup / Mod loader management:");
         System.out.println("  --setup                 Download version manifest and prepare");
-        System.out.println("  --add-mods forge|neoforge|optifine  Install Forge/NeoForge/OptiFine");
+        System.out.println("  --add-mods forge|neoforge|optifine|fabric  Install mod loader");
         System.out.println("  --optifine-jar <file>   Use local OptiFine jar (with --add-mods optifine)");
         System.out.println("  --list-versions         List all installed/available versions");
         System.out.println("  --unpin                 Symlink jar to ~/.local/bin/mc");

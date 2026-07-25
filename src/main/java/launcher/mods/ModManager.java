@@ -30,6 +30,8 @@ public class ModManager {
     private static final String FORGE_MAVEN = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
     private static final String NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
     private static final String OPTIFINE_DOWNLOADS = "https://optifine.net/downloads";
+    private static final String FABRIC_MAVEN = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml";
+    private static final String FABRIC_INSTALLER_BASE = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/";
 
     private final Path mcDir;
 
@@ -91,6 +93,44 @@ public class ModManager {
         log.info("Running NeoForge installer...");
         runInstaller(installer);
         log.info("NeoForge {} installed successfully", neoVersion);
+    }
+
+    public String findLatestFabricInstaller() throws IOException {
+        List<ForgeVersion> versions = parseMavenMetadata(FABRIC_MAVEN);
+        return versions.stream()
+                .map(v -> v.fullVersion)
+                .reduce((a, b) -> a.compareTo(b) > 0 ? a : b)
+                .orElse(null);
+    }
+
+    public void installFabric(String installerVersion, String mcVersion) throws IOException {
+        String url = FABRIC_INSTALLER_BASE + installerVersion + "/fabric-installer-" + installerVersion + ".jar";
+        Path installer = mcDir.resolve(".launcher/fabric-installer-" + installerVersion + ".jar");
+        Files.createDirectories(installer.getParent());
+        if (!Files.exists(installer)) {
+            log.info("Downloading Fabric installer: {}", installerVersion);
+            launcher.util.DownloadUtil.download(url, installer);
+        }
+        log.info("Running Fabric installer for MC {}", mcVersion);
+        ensureLauncherProfile();
+        Process proc = new ProcessBuilder(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-jar", installer.toAbsolutePath().toString(),
+                "client",
+                "-dir", mcDir.toAbsolutePath().toString(),
+                "-mcversion", mcVersion
+        ).inheritIO().start();
+        int exit;
+        try {
+            exit = proc.waitFor();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted", e);
+        }
+        if (exit != 0) {
+            throw new IOException("Fabric installer exited with code " + exit);
+        }
+        log.info("Fabric {} installed for MC {}", installerVersion, mcVersion);
     }
 
     public Path downloadOptiFine(String mcVersion) throws IOException {
@@ -168,7 +208,16 @@ public class ModManager {
         }
     }
 
+    private void ensureLauncherProfile() throws IOException {
+        Path profileFile = mcDir.resolve("launcher_profiles.json");
+        if (!Files.exists(profileFile)) {
+            Files.writeString(profileFile, "{\"profiles\":{},\"selectedProfile\":\"\",\"clientToken\":\"00000000-0000-0000-0000-000000000000\"}");
+            log.info("Created dummy launcher_profiles.json for installer");
+        }
+    }
+
     private void runInstaller(Path installer) throws IOException {
+        ensureLauncherProfile();
         Process proc = new ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-jar", installer.toAbsolutePath().toString(),
