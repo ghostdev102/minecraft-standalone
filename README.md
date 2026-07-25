@@ -53,4 +53,4 @@ See `DEV_DOCS.md` for architecture details.
 ---
 
 > ⚠️ Not affiliated with Mojang AB. "Minecraft" is a trademark of Mojang AB.
-> Users must own a legitimate Minecraft account. Use at own risk.
+> Users should own a legitimate Minecraft account. Use at own risk.
