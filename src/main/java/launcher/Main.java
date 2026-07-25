@@ -15,7 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -102,6 +106,7 @@ public class Main {
         String resOverride = config.get("resolution", null);
         boolean dryRun = false;
         boolean verbose = false;
+        String skinPath = null;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -111,6 +116,7 @@ public class Main {
                 case "--port"     -> { if (i + 1 < args.length) { try { serverPort = Integer.parseInt(args[++i]); } catch (NumberFormatException ignored) {} } }
                 case "--ram"      -> { if (i + 1 < args.length) ramOverride = args[++i]; }
                 case "--res"      -> { if (i + 1 < args.length) resOverride = args[++i]; }
+                case "--skin" -> { if (i + 1 < args.length) skinPath = args[++i]; }
                 case "--no-sounds" -> noSounds = true;
                 case "--setup"    -> setupMode = true;
                 case "--dry-run"  -> dryRun = true;
@@ -281,6 +287,11 @@ public class Main {
             var auth = new OfflineAuthManager(username);
             var profile = auth.authenticate();
 
+            Path resolvedSkin = null;
+            if (skinPath != null) {
+                resolvedSkin = resolveSkin(skinPath, username, mcDir);
+            }
+
             List<String> extraArgs = new ArrayList<>();
             if (serverAddress != null) {
                 extraArgs.add("--server");
@@ -401,6 +412,28 @@ public class Main {
         System.out.println();
     }
 
+    private static Path resolveSkin(String input, String username, Path mcDir) throws IOException {
+        Path skinsDir = mcDir.resolve("skins");
+        Files.createDirectories(skinsDir);
+        Path dest = skinsDir.resolve(username + ".png");
+
+        if (input.startsWith("http://") || input.startsWith("https://")) {
+            log.info("Downloading skin from {}", input);
+            try (InputStream in = URI.create(input).toURL().openStream()) {
+                Files.copy(in, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } else {
+            Path src = Path.of(input);
+            if (!Files.exists(src)) {
+                log.warn("Skin file not found: {}", src);
+                return null;
+            }
+            Files.copy(src, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        log.info("Skin saved to {}", dest);
+        return dest;
+    }
+
     private static void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
@@ -429,7 +462,7 @@ public class Main {
         System.out.println("  --mod-forge             Use Forge version (if installed)");
         System.out.println("  --mod-neoforge          Use NeoForge version (if installed)");
         System.out.println("  --mods <file.jar>       Copy mod to mods/ before launch");
-        System.out.println("  --no-sounds             Skip downloading sound assets");
+        System.out.println("  --skin <file|url>       Skin PNG path or URL to download");
         System.out.println("  --dry-run               Print the launch command and exit");
         System.out.println("  --verbose               Debug-level logging");
         System.out.println();
