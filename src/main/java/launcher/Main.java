@@ -107,6 +107,7 @@ public class Main {
         boolean dryRun = false;
         boolean verbose = false;
         String skinPath = null;
+        String capePath = null;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -117,6 +118,7 @@ public class Main {
                 case "--ram"      -> { if (i + 1 < args.length) ramOverride = args[++i]; }
                 case "--res"      -> { if (i + 1 < args.length) resOverride = args[++i]; }
                 case "--skin" -> { if (i + 1 < args.length) skinPath = args[++i]; }
+                case "--cape" -> { if (i + 1 < args.length) capePath = args[++i]; }
                 case "--no-sounds" -> noSounds = true;
                 case "--setup"    -> setupMode = true;
                 case "--dry-run"  -> dryRun = true;
@@ -413,24 +415,28 @@ public class Main {
     }
 
     private static Path resolveSkin(String input, String username, Path mcDir) throws IOException {
-        Path skinsDir = mcDir.resolve("skins");
-        Files.createDirectories(skinsDir);
-        Path dest = skinsDir.resolve(username + ".png");
+        return resolveImage(input, username, mcDir, "skins");
+    }
+
+    private static Path resolveImage(String input, String username, Path mcDir, String subdir) throws IOException {
+        Path dir = mcDir.resolve(subdir);
+        Files.createDirectories(dir);
+        Path dest = dir.resolve(username + ".png");
 
         if (input.startsWith("http://") || input.startsWith("https://")) {
-            log.info("Downloading skin from {}", input);
+            log.info("Downloading {} from {}", subdir, input);
             try (InputStream in = URI.create(input).toURL().openStream()) {
                 Files.copy(in, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
         } else {
             Path src = Path.of(input);
             if (!Files.exists(src)) {
-                log.warn("Skin file not found: {}", src);
+                log.warn("{} file not found: {}", subdir, src);
                 return null;
             }
             Files.copy(src, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
-        log.info("Skin saved to {}", dest);
+        log.info("Saved {} to {}", subdir.substring(0, subdir.length() - 1), dest);
         return dest;
     }
 
@@ -462,7 +468,8 @@ public class Main {
         System.out.println("  --mod-forge             Use Forge version (if installed)");
         System.out.println("  --mod-neoforge          Use NeoForge version (if installed)");
         System.out.println("  --mods <file.jar>       Copy mod to mods/ before launch");
-        System.out.println("  --skin <file|url>       Skin PNG path or URL to download");
+        System.out.println("  --skin <file|url>       Skin PNG path or URL");
+        System.out.println("  --cape <file|url>       Cape PNG path or URL");
         System.out.println("  --dry-run               Print the launch command and exit");
         System.out.println("  --verbose               Debug-level logging");
         System.out.println();
