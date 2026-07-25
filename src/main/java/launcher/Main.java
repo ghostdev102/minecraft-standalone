@@ -119,6 +119,7 @@ public class Main {
         String resOverride = config.get("resolution", null);
         boolean dryRun = false;
         boolean verbose = false;
+        boolean downloadLogging = false;
         String skinPath = null;
         String capePath = null;
         String resourcePackPath = null;
@@ -140,6 +141,7 @@ public class Main {
                 case "--resource-pack-rm" -> { if (i + 1 < args.length) resourcePackRm = args[++i]; }
                 case "--shader" -> { if (i + 1 < args.length) shaderPath = args[++i]; }
                 case "--optifine-jar" -> { if (i + 1 < args.length) optifineJarPath = args[++i]; }
+                case "--logs" -> downloadLogging = true;
                 case "--no-sounds" -> noSounds = true;
                 case "--setup"    -> setupMode = true;
                 case "--dry-run"  -> dryRun = true;
@@ -338,7 +340,7 @@ public class Main {
                 try { assetManager.prepareAssets(resolved.assetIndexId()); } catch (Exception ignored) {}
             }
 
-            if (resolved.logging != null && resolved.logging.client != null
+            if (downloadLogging && resolved.logging != null && resolved.logging.client != null
                     && resolved.logging.client.file != null) {
                 try {
                     Path loggingDir = mcDir.resolve("assets/log_configs");
@@ -551,6 +553,7 @@ public class Main {
         System.out.println("  --resource-pack <z|url> Resource pack zip path or URL");
         System.out.println("  --resource-pack-rm <n>  Remove resource pack by name");
         System.out.println("  --shader <zip|url>      Shader pack zip path or URL");
+        System.out.println("  --logs                  Download logging config (disabled by default)");
         System.out.println("  --dry-run               Print the launch command and exit");
         System.out.println("  --verbose               Debug-level logging");
         System.out.println();
